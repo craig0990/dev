@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+
+VERSION="0.1.0"
+SCRIPTNAME="${0##*/}"
+DEV_FILENAME="${DEV_FILENAME:-Devfile}"
+DEV_COMMAND_PATTERN="${DEV_COMMAND_PATTERN:-[a-zA-Z0-9_-]}"
+
+shopt -s expand_aliases
+
+# Traverse up until we find the nearest `Devfile`
+#
+# @see https://unix.stackexchange.com/a/293477
+_findconfig() {
+    # from: https://www.npmjs.com/package/find-config#algorithm
+    # 1. If X/file.ext exists and is a regular file, return it. STOP
+    # 2. If X has a parent directory, change X to parent. GO TO 1
+    # 3. Return NULL.
+
+    if [ -f "$1" ]; then
+        printf '%s\n' "${PWD%/}/$1"
+    elif [ "$PWD" = / ]; then
+        false
+    else
+        # a subshell so that we don't affect the caller's $PWD
+        (cd .. && _findconfig "$1")
+    fi
+}
+
+_commands() {
+    local DEVSRC=$1
+    grep -E "^(alias |(function )?${DEV_COMMAND_PATTERN}+ ?\()|function $NAME" "$DEVSRC" \
+        | sed 's/alias \([^= ]*\)=.*/\1/' \
+        | sed -E "s/(function )?(${DEV_COMMAND_PATTERN}+) ?\(\).*/\2/" \
+        | sed -E "s/function (${DEV_COMMAND_PATTERN}+).*/\1/"
+}
+
+# Grep for functions, aliases, and exports, and extract the preceding
+# comment line (if any)
+#
+# Stolen from `desk`
+#
+# @see https://github.com/jamesob/desk/blob/master/desk
+_docs() {
+    local DEVSRC=$1
+    local COMMANDS=$(_commands $DEVSRC)
+    local DESCRIPTION=$(grep -E "#\s+Description: " "$DEVSRC" | head -n 1)
+    if [ -n "${DESCRIPTION}" ]; then
+        echo
+        echo "  ${DESCRIPTION##*Description: }"
+    fi
+
+    for NAME in $COMMANDS; do
+        local DOCLINE=$(
+            grep -B 1 -E \
+            "^(alias ${NAME}=|export ${NAME}=|(function )?${NAME}( )?\()|function $NAME" "$DEVSRC" \
+            | grep "#")
+
+    if [ -z "$DOCLINE" ]; then
+        out+="    ${NAME}"$'\n'
+    else
+        out+="    ${NAME} - ${DOCLINE##\# }"$'\n'
+    fi
+
+    done
+
+    echo
+    echo "  Available commands:"
+    echo
+
+    echo "$out"
+}
+
+# Also available in a `Devfile` if you want, but makes the Devfile less portable
+_debug() {
+    if [ -n "$DEV_DEBUG" ]; then
+        echo -e "\e[0;33mdev: $@\e[m"
+    fi
+}
+
+_usage() {
+    echo "  dev v${VERSION}"
+    echo
+    echo "  Usage: $SCRIPTNAME [command] [...args]"
+}
+
+DEVSRC=${DEV_FILE:-$(_findconfig $DEV_FILENAME)}
+
+if [ -n "${DEV_FILE}" ] && [ ! -f "${DEV_FILE}" ]; then
+    echo
+    _usage
+    echo
+    echo "  ERR: Preset DEV_FILE \"${DEV_FILE}\" does not exist"
+    echo
+    exit 1
+fi
+
+if [ -z "$DEVSRC" ]; then
+    echo
+    _usage
+    echo
+    echo "  ERR: No ${DEV_FILENAME} found in this directory or parent directories"
+    echo
+    exit 1
+fi
+
+DEVPATH=$(dirname $DEVSRC)
+
+_debug "Using ${DEVSRC}"
+
+source $DEVSRC
+
+if [ -z "$1" ] && [ -z "$DEV_COMMANDS" ]; then
+    echo
+    _usage
+    _docs $DEVSRC
+
+    echo "  (Using $DEVSRC)"
+    echo
+    exit 1
+elif [ -z "$1" ]; then
+    _commands $DEVSRC
+fi
+
+cd $DEVPATH
+eval "$1" "${@:2}"

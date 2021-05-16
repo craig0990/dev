@@ -1,0 +1,8 @@
+# Description: An example with a description and command comments
+
+# Description: first `# Description: ` comment wins
+
+# Says a greeting
+hello() {
+    echo "Hello"
+}

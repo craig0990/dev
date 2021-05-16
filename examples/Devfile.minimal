@@ -1,0 +1,7 @@
+hello() {
+    echo "Hello"
+}
+
+ignored:with:colons() {
+    echo "Yeah"
+}
